@@ -9,8 +9,16 @@ import org.apache.catalina.LifecycleEvent;
 import org.apache.catalina.LifecycleException;
 import org.apache.catalina.LifecycleListener;
 import org.apache.catalina.Loader;
+import org.apache.catalina.Valve;
 import org.apache.catalina.Wrapper;
+import org.apache.catalina.authenticator.BasicAuthenticator;
+import org.apache.catalina.authenticator.DigestAuthenticator;
+import org.apache.catalina.authenticator.NonLoginAuthenticator;
+import org.apache.catalina.authenticator.SSLAuthenticator;
 import org.apache.catalina.core.StandardContext;
+import org.apache.catalina.deploy.LoginConfig;
+import org.apache.catalina.deploy.SecurityCollection;
+import org.apache.catalina.deploy.SecurityConstraint;
 
 import java.beans.PropertyChangeListener;
 import java.util.concurrent.ConcurrentMap;
@@ -19,9 +27,13 @@ import java.util.concurrent.ConcurrentMap;
 public class ClusterMonitorContext extends StandardContext {
     private static final String CONTEXT_NAME = System.getProperty("rmannibucau.cluster.monitor.context", "/rmannibucau-tomcat-monitor");
     private static final String MAPPING = System.getProperty("rmannibucau.cluster.monitor.controller", "/controller");
+    private static final String AUTH = System.getProperty("rmannibucau.cluster.monitor.auth", "NONE");
+    private static final String REALM = System.getProperty("rmannibucau.cluster.monitor.realm", "");
+    private static final String ROLE = System.getProperty("rmannibucau.cluster.monitor.role", "system");
+    private static final String TRANSPORT_GUARANTEE = System.getProperty("rmannibucau.cluster.monitor.transport-guarantee", "NONE");
+    private static final String VALVE = System.getProperty("rmannibucau.cluster.monitor.valve");
 
     private final ConcurrentMap<Cluster, DynamicMembershipInterceptor> clusters;
-    private Boolean configured = null;
 
     public ClusterMonitorContext(final ConcurrentMap<Cluster, DynamicMembershipInterceptor> clusters) {
         setDocBase("");
@@ -34,19 +46,77 @@ public class ClusterMonitorContext extends StandardContext {
 
         this.clusters = clusters;
 
+        // needed to let tomcat handle this context as started
         addLifecycleListener(new LifecycleListener() {
             @Override
             public void lifecycleEvent(final LifecycleEvent event) {
-                try {
-                    final Context context = Context.class.cast(event.getLifecycle());
-                    if (event.getType().equals(Lifecycle.CONFIGURE_START_EVENT)) {
-                        context.setConfigured(true);
-                    }
-                } catch (final ClassCastException e) {
-                    // no-op
+                if (!Context.class.isInstance(event.getSource())) {
+                    return;
+                }
+
+                final Context context = Context.class.cast(event.getSource());
+                if (event.getType().equals(Lifecycle.CONFIGURE_START_EVENT)) {
+                    context.setConfigured(true);
                 }
             }
         });
+
+        // in TomEE exclude this context
+        System.setProperty(CONTEXT_NAME.replaceFirst("^/", "") + ".tomcat-only", Boolean.TRUE.toString());
+
+        // setup security
+        if ("BASIC".equals(AUTH) || "DIGEST".equals(AUTH) || "CLIENT-CERT".equals(AUTH)) {
+            final LoginConfig loginConfig = new LoginConfig();
+            loginConfig.setAuthMethod(AUTH);
+            loginConfig.setRealmName(REALM);
+            setLoginConfig(loginConfig);
+
+            //Setup a default Security Constraint
+            for (final String role : ROLE.split(",")) {
+                final SecurityCollection collection = new SecurityCollection();
+                collection.addMethod("GET");
+                collection.addMethod("POST");
+                collection.addMethod("DELETE");
+                collection.addMethod("PATCH");
+                collection.addMethod("PUT");
+                collection.addMethod("OPTIONS");
+                collection.addMethod("TRACE");
+                collection.addMethod("HEAD");
+                collection.addMethod("CONNECT");
+                collection.addPattern("/*");
+                collection.setName(role);
+
+                final SecurityConstraint sc = new SecurityConstraint();
+                sc.addAuthRole("*");
+                sc.addCollection(collection);
+                sc.setAuthConstraint(true);
+                sc.setUserConstraint(TRANSPORT_GUARANTEE);
+
+                addConstraint(sc);
+                addSecurityRole(role);
+            }
+
+            //Set the proper authenticator
+            if ("BASIC".equals(AUTH)) {
+                addValve(new BasicAuthenticator());
+            } else if ("DIGEST".equals(AUTH)) {
+                addValve(new DigestAuthenticator());
+            } else if ("CLIENT-CERT".equals(AUTH)) {
+                addValve(new SSLAuthenticator());
+            } else if ("NONE".equals(AUTH)) {
+                addValve(new NonLoginAuthenticator());
+            }
+        }
+
+        if (VALVE != null) {
+            for (final String valve : VALVE.split(",")) {
+                try {
+                    addValve(Valve.class.cast(getLoader().getClassLoader().loadClass(valve.trim())));
+                } catch (final ClassNotFoundException e) {
+                    getLogger().error(e.getMessage(), e);
+                }
+            }
+        }
     }
 
     @Override

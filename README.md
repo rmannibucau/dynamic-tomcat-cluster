@@ -35,6 +35,11 @@ This is configurable by system properties:
 * `rmannibucau.cluster.monitor.context` - default=/rmannibucau-tomcat-monitor - the webapp added to be able to update member list
 * `rmannibucau.cluster.monitor.controller` - default=/controller - the servlet endpoint
 * `rmannibucau.cluster.monitor.aliveTime` - default=0 - the aliveTime of the dynamic members
+* `rmannibucau.cluster.monitor.auth` - default=NONE - the security to apply, values can be NONE, BASIC, DIGEST, CLIENT-CERT
+* `rmannibucau.cluster.monitor.realm` - default=no default - the realm to associate when auth != NONE
+* `rmannibucau.cluster.monitor.role` - default=system - the role used by security when auth != NONE
+* `rmannibucau.cluster.monitor.transport-guarantee` - default=ONE - the transport guarantee when auth != NONE (values can be NONE or CONFIDENTIAL)
+* `rmannibucau.cluster.monitor.valve` - default=no default - custom valve for the context
 
 # Usage
 
